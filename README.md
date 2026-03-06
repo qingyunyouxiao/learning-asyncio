@@ -130,4 +130,70 @@ if __name__ == '__main__':
 使用一个父进程和两个子进程进行多处理的应用程序。我们创建了一个子进程，该子进程打印其进程 ID，我们还打印出父进程 ID，以证明我们正在运行不同的进程。当我们有 CPU 密集型工作时，多进程通常是最好的。
 
 ### 1.5 理解 GIL
-全局解释器锁是 Python 社区中的一个有争议的话题。简而言之，GIL 会在任何时候阻止一个 Python 进程执行超过一个 Python 字节码指令。这意味着即使我们在具有多个核的机器上具有多个线程，一个 Python 进程一次也只能运行一个线程的 Python 代码。
+全局解释器锁是 Python 社区中的一个有争议的话题。简而言之，GIL 会在任何时候阻止一个 Python 进程执行超过一个 Python 字节码指令。这意味着即使我们在具有多个核的机器上具有多个线程，一个 Python 进程一次也只能运行一个线程的 Python 代码。注意多处理可以同时运行多个字节码指令，因为每个 Python 进程都有自己的 GIL。
+
+那么为什么存在 GIL 呢？答案在于 CPython 中的内存管理方式。在 CPython 中，内存主要由一个称为引用计数的过程进行管理。引用计数通过跟踪当前需要访问特定 Python 对象（例如整数、字典或列表）的人来工作。引用计数是一个整数，用于跟踪有多少地方引用了特定对象。当某人不再需要引用的对象时，引用计数会递减，当其他人需要它时，它会递增。当引用计数达到零时，没有人引用该对象，它可以从内存中删除。
+
+#### 什么是 CPython
+线程冲突的产生在于 CPython 的实现并非线程安全的。当我们说 CPython 不是线程安全时，意思是如果两个或多个线程修改一个共享变量，该变量可能会最终处于意外的状态。这种意外状态取决于线程访问该变量的顺序，通常称为竞态条件。当两个线程需要同时引用一个 Python 对象时，就可能出现竞态条件。
+
+为了展示 GIL 对多线程编程的影响，让我们来看看计算斐波那契数列中第 n 个数字的 CPU 密集型任务。我们将使用一个相当慢的算法实现来演示一个时间密集型操作。一个适当的解决方案将利用 memoization 或数学技术来提高性能。
+
+#### Listing1.5 生成斐波那契数列并计时
+```python
+import time
+
+def print_fib(number: int) -> None:
+    def fib(n: int) -> int:
+        if n == 1:
+            return 0
+        elif n == 2:
+            return 1
+        else:
+            return fib(n - 1) + fib(n - 2)
+    
+    print(f'fib({number}) is {fib(number)}')
+
+def fibs_no_threading():
+    print_fib(40)
+    print_fib(41)
+
+start = time.time()
+fibs_no_threading()
+end = time.time()
+
+print(f'Completed in {end - start:.4f} seconds.')
+```
+这个实现使用了递归，总体上是一个相对较慢的算法，需要指数级的时间来完成。如果我们需要打印两个斐波那契数，同步调用它们并计时结果很容易，就像我们在前面的列表中做的那样。
+
+#### Listing1.6 斐波那契数列的多线程
+```python
+import threading
+import time
+
+def print_fib(number: int) -> None:
+    def fib(n: int) -> int:
+        if n == 1:
+            return 0
+        elif n == 2:
+            return 1
+        else:
+            return fib(n - 1) + fib(n - 2)
+
+def fibs_with_threads():
+    thread_40 = threading.Thread(target=print_fib, args=(40,))
+    thread_41 = threading.Thread(target=print_fib, args=(41,))
+
+    thread_40.start()
+    thread_41.start()
+
+    thread_40.join()
+    thread_41.join()
+
+start_threads = time.time()
+fibs_with_threads()
+end_threads = time.time()
+
+print(f'Threads took {end_threads - start_threads:.4f} seconds.')
+```
+我们的多线程版本花费了几乎相同的时间。事实上，它甚至有点慢！这几乎完全归因于 GIL 和创建和管理线程的开销。虽然线程确实是并发运行的，但由于锁定，只有一个线程可以一次运行 Python 代码。这使其他线程处于等待状态，直到第一个线程完成，这完全否定了多线程的价值。
