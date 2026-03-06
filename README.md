@@ -1,5 +1,5 @@
 # 使用 asyncio 的 Python 并发
-关于此书：[链接](https://www.manning.com/books/python-concurrency-with-asyncio)
+https://www.manning.com/books/python-concurrency-with-asyncio
 
 ## 第一章 了解 asyncio
 
@@ -87,4 +87,47 @@ thread_name = threading.current_thread().name
 print(f'Python is currently running {total_threads} thread(s)')
 print(f'The current thread is {thread_name}')
 ```
-我们创建了一个简单的应用程序，以显示主线程的基本知识。我们首先获取进程 ID（次运行此代码时进程 ID 都会不同）并将其打印出来，以证明我们确实有一个专用进程在运行。然后，我们获取正在运行的线程的活动计数以及当前线程的名称，以显示我们正在运行一个主线程。
+一个主线程从内存中读取数据的过程。我们创建了一个简单的应用程序，以显示主线程的基本知识。我们首先获取进程 ID（次运行此代码时进程 ID 都会不同）并将其打印出来，以证明我们确实有一个专用进程在运行。然后，我们获取正在运行的线程的活动计数以及当前线程的名称，以显示我们正在运行一个主线程。
+
+#### Listing1.3 创建多线程 Python 应用程序
+```python
+import threading
+
+def hello_from_thread():
+    print(f'Hello from Thread {threading.current_thread()}!')
+
+hello_thread = threading.Thread(target=hello_from_thread)
+hello_thread.start()
+
+total_threads = threading.active_count()
+thread_name = threading.current_thread().name
+
+print(f'Python is currently running {total_threads} thread(s)')
+print(f'The current thread is {thread_name}')
+
+hello_thread.join()
+```
+一个具有两个工作线程和一个主线程的多线程程序，每个线程都共享进程的内存。我们创建了一个方法来打印出当前线程的名称，然后创建一个线程来运行该方法。然后，我们调用线程的 start 方法来开始运行它。最后，我们调用 join 方法。join 将导致程序暂停，直到我们启动的线程完成。
+
+在许多编程语言中，多线程应用程序是实现并发的一种常见方式。然而，在 Python 中使用线程进行并发存在一些挑战。多线程仅适用于 I/O 受限的工作，因为我们受到全局解释器锁的限制。多线程不是我们实现并发的唯一方式；我们还可以创建多个进程同时为我们工作。这被称为多进程。在多进程中，父进程创建一个或多个子进程，由它管理。然后它可以将工作分配给子进程。
+
+Python 为我们提供了 multiprocessing 模块来处理这个问题。其 API 与 threading 模块的 API 类似。我们首先创建一个带有目标函数的进程，然后调用其 start 方法来执行它，最后调用其 join 方法来等待它完成运行。
+
+#### Listing1.4 创建多个进程
+```python
+import multiprocessing
+import os
+
+def hello_from_process():
+    print(f'Hello from child process {os.getpid()}!')
+
+if __name__ == '__main__':
+    hello_process = multiprocessing.Process(target=hello_from_process)
+    hello_process.start()
+    print(f'Hello from parent process {os.getpid()}')
+    hello_process.join()
+```
+使用一个父进程和两个子进程进行多处理的应用程序。我们创建了一个子进程，该子进程打印其进程 ID，我们还打印出父进程 ID，以证明我们正在运行不同的进程。当我们有 CPU 密集型工作时，多进程通常是最好的。
+
+### 1.5 理解 GIL
+全局解释器锁是 Python 社区中的一个有争议的话题。简而言之，GIL 会在任何时候阻止一个 Python 进程执行超过一个 Python 字节码指令。这意味着即使我们在具有多个核的机器上具有多个线程，一个 Python 进程一次也只能运行一个线程的 Python 代码。
