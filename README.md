@@ -1,38 +1,49 @@
 # 使用 asyncio 的 Python 并发
 https://www.manning.com/books/python-concurrency-with-asyncio
 
-## 第一章 了解 asyncio
+## 第二章 asyncio 基础
 
 ### 本章涵盖
-1. Asyncio 是什么？以及它提供的好处。
-2. 并发性、并行性、线程和进程。
-3. 全局解释器锁及其对并发性的挑战。
-4. 非阻塞套接字如何仅使用一个线程实现并发。
-5. 基于事件循环并发的基本原理。
+1. 异步 await 语法和协程的基础知识。
+2. 同时运行协程和任务。
+3. 取消任务。
+4. 手动创建事件循环。
+5. 测量协程的执行时间。
 
-Web 应用依赖于输入输出（I/O）操作，同时发出许多 I/O 请求可能会导致严重的性能问题。asyncio 最初在 Python 3.4 中引入，是除了多线程和多进程之外处理这些高度并发工作负载的另一种方式。正确地使用这个库可以大幅提高使用 I/O 操作的应用程序的性能和资源利用率，因为它允许我们同时启动许多这些长期运行的任务。
+我们将更多地了解 coroutine 构造以及如何使用 async await 语法来定义和运行协程。我们还将通过使用任务来检查如何并发运行协程，并通过创建可重用的计时器来检查我们通过并发运行所节省的时间。最后，我们将研究软件工程师在使用 asyncio 时可能犯的常见错误以及如何使用调试模式来发现这些问题。
 
-### 1.1 什么是异步
-在同步应用中，代码是顺序执行的。并发意味着允许同时处理多个任务。
+### 2.1 介绍协程
+想象一个协程就像一个普通的 Python 函数，但是当它遇到一个可能要花一点时间才能完成的操作时，它可以暂停执行。当这个长时间运行的操作完成时，我们可以恢复我们暂停的协程，并完成协程中的任何其他代码的执行。当一个暂停的协程正在等待它暂停的操作完成时，我们可以运行其他代码。
 
-那么什么是异步编程呢？它意味着一个特定的长期运行任务可以在后台运行，与主应用程序分开。而不是阻塞所有其他应用程序代码等待该长期运行任务完成，系统可以自由地执行不依赖于该任务的其他工作。然后，一旦长期运行任务完成，我们将收到通知，表示任务已完成，这样我们就可以处理结果。
+要创建和暂停协程，我们需要学习使用 Python 的 async 和 await 关键字。async 关键字让我们能够定义协程；await 关键字则允许我们在遇到耗时操作时暂停协程。
 
-### 1.2 什么是 I/O 绑定和 CPU 绑定
-当我们说一个操作是 I/O 限制或 CPU 限制时，我们指的是阻止该操作运行更快的限制因素。这意味着如果我们提高了操作所依赖的限制因素的性能，该操作将在更短的时间内完成。
+### 2.2 使用 async 关键字创建协程
+创建协程非常简单，与创建普通 Python 函数没有太大区别。唯一的区别是，我们使用 async def 代替 def 关键字。async 关键字将函数标记为协程，而不是普通 Python 函数。
 
-#### Listing1.1 I/O 绑定和 CPU 绑定操作
+#### Listing2.1 使用 async 关键字
 ```python
-import requests
-
-response = requests.get('https://www.example.com')
-items = response.headers.items()
-
-headers = [f'{key}:{header}' for key, header in items]
-formatted_headers = '\n'.join(headers)         
-
-with open('headers.text', 'w') as file: file.write(formatted_headers)
+async def my_coroutine() -> None:
+    print('Hello World!')
 ```
-I/O 绑定操作和 CPU 绑定操作通常会并排执行。我们首先发出一个 I/O 绑定请求来下载 https://www.example.com 的内容。一旦收到响应，我们就会执行一个 CPU 绑定循环来格式化响应的标头并将其转换为以换行符分隔的字符串。然后我们打开一个文件并将该字符串写入该文件，这两个操作都是 I/O 绑定操作。
+值得注意的是，这个协程没有执行任何长时间运行的操作。
+
+#### Listing2.2 将协程与普通函数进行比较
+```python
+async def coroutine_add_one(number: int) -> int:
+    return number + 1
+
+def add_one(number: int) -> int:
+    return number + 1
+
+function_result = add_one(1)
+coroutine_result = coroutine_add_one(1)
+
+print(f'Function result is {function_result} and the type is {type(function_result)}')
+print(f'Coroutine result is {coroutine_result} and the type is {type(coroutine_result)}')
+```
+请注意，当我们调用正常的 add_one 函数时，它会立即执行并返回我们期望的结果，即另一个整数。但是，当我们调用 coroutine_add_one 时，我们根本不会执行 coroutine 中的代码。我们得到的是一个 coroutine 对象。
+
+这是一个重要的问题，因为当我们直接调用协程时，它们不会被执行。相反，我们创建一个可以稍后运行的协程对象。要运行协程，我们需要显式地在事件循环上运行它。如果还没有事件循环，我们需要创建一个事件循环。
 
 ### 1.3 理解并发性、并行性和多任务
 要更好地理解并发如何帮助我们的应用程序运行得更好，首先需要学习和充分理解并发编程的术语。我们将学习更多关于并发意味着什么，以及 asyncio 如何使用多任务的概念来实现它。并发和并行是两个概念，它们帮助我们了解编程如何调度和执行各种任务、方法和例程，以驱动操作。
@@ -130,4 +141,70 @@ if __name__ == '__main__':
 使用一个父进程和两个子进程进行多处理的应用程序。我们创建了一个子进程，该子进程打印其进程 ID，我们还打印出父进程 ID，以证明我们正在运行不同的进程。当我们有 CPU 密集型工作时，多进程通常是最好的。
 
 ### 1.5 理解 GIL
-全局解释器锁是 Python 社区中的一个有争议的话题。简而言之，GIL 会在任何时候阻止一个 Python 进程执行超过一个 Python 字节码指令。这意味着即使我们在具有多个核的机器上具有多个线程，一个 Python 进程一次也只能运行一个线程的 Python 代码。
+全局解释器锁是 Python 社区中的一个有争议的话题。简而言之，GIL 会在任何时候阻止一个 Python 进程执行超过一个 Python 字节码指令。这意味着即使我们在具有多个核的机器上具有多个线程，一个 Python 进程一次也只能运行一个线程的 Python 代码。注意多处理可以同时运行多个字节码指令，因为每个 Python 进程都有自己的 GIL。
+
+那么为什么存在 GIL 呢？答案在于 CPython 中的内存管理方式。在 CPython 中，内存主要由一个称为引用计数的过程进行管理。引用计数通过跟踪当前需要访问特定 Python 对象（例如整数、字典或列表）的人来工作。引用计数是一个整数，用于跟踪有多少地方引用了特定对象。当某人不再需要引用的对象时，引用计数会递减，当其他人需要它时，它会递增。当引用计数达到零时，没有人引用该对象，它可以从内存中删除。
+
+#### 什么是 CPython
+线程冲突的产生在于 CPython 的实现并非线程安全的。当我们说 CPython 不是线程安全时，意思是如果两个或多个线程修改一个共享变量，该变量可能会最终处于意外的状态。这种意外状态取决于线程访问该变量的顺序，通常称为竞态条件。当两个线程需要同时引用一个 Python 对象时，就可能出现竞态条件。
+
+为了展示 GIL 对多线程编程的影响，让我们来看看计算斐波那契数列中第 n 个数字的 CPU 密集型任务。我们将使用一个相当慢的算法实现来演示一个时间密集型操作。一个适当的解决方案将利用 memoization 或数学技术来提高性能。
+
+#### Listing1.5 生成斐波那契数列并计时
+```python
+import time
+
+def print_fib(number: int) -> None:
+    def fib(n: int) -> int:
+        if n == 1:
+            return 0
+        elif n == 2:
+            return 1
+        else:
+            return fib(n - 1) + fib(n - 2)
+    
+    print(f'fib({number}) is {fib(number)}')
+
+def fibs_no_threading():
+    print_fib(40)
+    print_fib(41)
+
+start = time.time()
+fibs_no_threading()
+end = time.time()
+
+print(f'Completed in {end - start:.4f} seconds.')
+```
+这个实现使用了递归，总体上是一个相对较慢的算法，需要指数级的时间来完成。如果我们需要打印两个斐波那契数，同步调用它们并计时结果很容易，就像我们在前面的列表中做的那样。
+
+#### Listing1.6 斐波那契数列的多线程
+```python
+import threading
+import time
+
+def print_fib(number: int) -> None:
+    def fib(n: int) -> int:
+        if n == 1:
+            return 0
+        elif n == 2:
+            return 1
+        else:
+            return fib(n - 1) + fib(n - 2)
+
+def fibs_with_threads():
+    thread_40 = threading.Thread(target=print_fib, args=(40,))
+    thread_41 = threading.Thread(target=print_fib, args=(41,))
+
+    thread_40.start()
+    thread_41.start()
+
+    thread_40.join()
+    thread_41.join()
+
+start_threads = time.time()
+fibs_with_threads()
+end_threads = time.time()
+
+print(f'Threads took {end_threads - start_threads:.4f} seconds.')
+```
+我们的多线程版本花费了几乎相同的时间。事实上，它甚至有点慢！这几乎完全归因于 GIL 和创建和管理线程的开销。虽然线程确实是并发运行的，但由于锁定，只有一个线程可以一次运行 Python 代码。这使其他线程处于等待状态，直到第一个线程完成，这完全否定了多线程的价值。
