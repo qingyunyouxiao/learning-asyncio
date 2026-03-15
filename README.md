@@ -1,6 +1,6 @@
 # 使用 asyncio 的 Python 并发
 
-项目来源：[链接](https://www.manning.com/books/python-concurrency-with-asyncio)
+https://www.manning.com/books/python-concurrency-with-asyncio
 
 ## 第三章：第一个异步IO应用程序
 
@@ -83,102 +83,162 @@ try:
             buffer = buffer + data
 
     print(f"All the data is: {buffer}")
+    connection.sendall(buffer)
 finally:
     server_socket.close()
 ```
 
-在前面的代码示例中，我们像之前一样使用 server_socket.accept() 来等待连接。一旦有连接建立，我们就尝试读取两个字节并将其存储在缓冲区中。接着进入循环，每次循环都会检查缓冲区的末尾是否为“回车换行符”\r\n。如果不是，我们就再读取两个字节，并将它们打印出来同时追加到缓冲区中。如果检测到\r\n字符，循环结束，我们将从客户端接收到的完整消息打印出来。最后，我们在finally块中关闭服务器socket，这样可以确保在读取数据时出现异常也能成功断开连接。如果我们使用telnet连接到该应用程序并发送消息“testing123”，将会看到如下输出。
+在前面的代码示例中，我们像之前一样使用 server_socket.accept() 来等待连接。一旦有连接建立，我们就尝试读取两个字节并将其存储在缓冲区中。接着进入循环，每次循环都会检查缓冲区的末尾是否为“回车换行符”\r\n。如果不是，我们就再读取两个字节，并将它们打印出来同时追加到缓冲区中。如果检测到\r\n字符，循环结束，我们将从客户端接收到的完整消息打印出来。最后，我们在finally块中关闭服务器socket，这样可以确保在读取数据时出现异常也能成功断开连接。当缓存区满后，调用connection.sendall将其中的消息回传给客户端。
 
-#### Listing2.2 将协程与普通函数进行比较
+### 3.2.2 允许多个连接和及阻塞带来的风险
 
-```python
-async def coroutine_add_one(number: int) -> int:
-    return number + 1
+处于监听模式的套接字可以同时接受多个客户端的连接。这意味着我们可以反复调用 socket.accept 函数，每当有客户端连接上来时，就能获得一个新的连接套接字，从而与该客户端进行数据的读写操作。掌握了这一原理后，我们就可以轻松地将之前的示例修改为能够处理多个客户端。程序会进入无限循环，不断调用 socket.accept 来监听新的连接。每当有新连接建立时，就会将其添加到已连接的客户端列表中。随后，程序会遍历每个连接，接收传入的数据，并将数据重新发送回客户端。
 
-def add_one(number: int) -> int:
-    return number + 1
-
-function_result = add_one(1)
-coroutine_result = coroutine_add_one(1)
-
-print(f'Function result is {function_result} and the type is {type(function_result)}')
-print(f'Coroutine result is {coroutine_result} and the type is {type(coroutine_result)}')
-```
-
-请注意，当我们调用正常的 add_one 函数时，它会立即执行并返回我们期望的结果，即另一个整数。但是，当我们调用 coroutine_add_one 时，我们根本不会执行 coroutine 中的代码。我们得到的是一个 coroutine 对象。这是一个重要的问题，因为当我们直接调用协程时，它们不会被执行。相反，我们创建一个可以稍后运行的协程对象。要运行协程，我们需要显式地在事件循环上运行它。如果还没有事件循环，我们需要创建一个事件循环。
-
-#### Listing2.3 运行协程
+#### Listing3.3 允许多个客户端连接
 
 ```python
-import asyncio
+import socket
 
-async def coroutine_add_one(number: int) -> int:
-    return number + 1
+server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
 
-result = asyncio.run(coroutine_add_one(1))
-print(result)
+server_address = ('127.0.0.1', 8080)
+server_socket.bind(server_address)
+server_socket.listen()
+connections = []
+
+try:
+    while True:
+        connection, client_address = server_socket.accept()
+        print(f'I got a connection from {client_address}!')
+        connections.append(connection)
+        for connection in connections:
+            buffer = b''
+
+            while buffer[-2:] != b'\r\n':
+                data = connection.recv(2)
+                if not data:
+                    break
+                else:
+                    print(f'I got data: {data}')
+                    buffer += data
+
+            print(f'All the data is: {buffer}')
+            connection.send(buffer)
+finally:
+    server_socket.close()
 ```
 
-在这个场景中，asyncio.run 执行了几个重要的操作。首先，它会创建一个全新的事件循环。成功创建后，它会接收我们传入的协程并运行直至完成，然后返回结果。该函数还会在主协程结束后清理所有可能仍在运行的内容。所有操作完成后，它会关闭并终止事件循环。
+我们可以尝试通过telnet建立第一个连接并输入一条消息。之后，再用第二个telnet客户端连接并发送另一条消息。但这样做时会立即发现问题：第一个客户端能正常工作，并按预期回显消息；而第二个客户端却收不到任何回复。这是因为套接字的默认阻塞机制所致。accept和recv函数在接收到数据前会一直处于阻塞状态。也就是说，当第一个客户端连接后，我们会一直等待它发送第一条回显消息，从而导致其他客户端也无法进入循环的下一轮处理，直到第一个客户端向我们发送数据为止。
 
-### 2.1.2 使用 await 关键字暂停执行
+在使用阻塞式套接字的情况下，客户端1能够成功连接，而客户端2则会被阻塞，直到客户端1发送数据为止。
 
-asyncio 的真正优势在于能够在遇到耗时操作时暂停执行，让事件循环在此期间运行其他任务。要暂停执行，我们使用 await 关键字。await 关键字通常后跟一个协程调用（更准确地说，是一个被称为 awaitable 的实例，它不一定是协程；本章后续部分我们将进一步了解）。我们可以在 coroutine 调用前使用 await 关键字。扩展我们之前的程序，我们可以编写一个程序，在 “main” 异步函数中调用 add_one 函数并获取结果。
+### 3.3 使用非阻塞套接字
 
-#### Listing2.4 使用 await 等待协程的结果
+我们之前的回声服务器允许多个客户端连接；然而，当多个客户端同时连接时，会出现某个客户端导致其他客户端必须等待其发送数据的问题。我们可以通过将套接字设置为非阻塞模式来解决这个问题。这样一来，每当调用可能造成阻塞的方法（如recv）时，该方法都能立即返回结果。如果套接字中有待处理的数据，我们会像使用阻塞套接字时一样收到数据；如果没有数据，套接字会立即告知我们暂无数据可用，这样我们就可以继续执行其他代码了。
+
+#### Listing 3.4 创建非阻塞套接字
 
 ```python
-import asyncio
+import socket
 
-async def add_one(number: int) -> int:
-    return number + 1
+server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
 
-async def main() -> None:
-    one_plus_one = await add_one(1)  
-    two_plus_one = await add_one(2) 
+server_address = ('127.0.0.1', 8080)
+server_socket.bind(server_address)
+server_socket.listen()
 
-    print(one_plus_one)
-    print(two_plus_one)
-
-asyncio.run(main())
+server_socket.setblocking(False)
 ```
 
-当我们遇到一个 await 表达式时，我们暂停父协程并运行 await 表达式中的协程。一旦它完成，我们恢复父协程并分配返回值。我们暂停了两次执行。我们首先等待 add_one(1) 的调用。一旦我们得到了结果，主函数就会开始执行，我们将把 add_one(1) 的返回值分配给变量 one_plus_one，在这个例子中就是 2。然后，我们为 add_one(2) 做同样的事情，然后打印结果。
+从根本上说，创建非阻塞套接字与创建阻塞套接字并无不同，只不过需要将 `setblocking` 设置为 `False`。默认情况下，套接字的此值为 `True`，表示其为阻塞模式。现在让我们在原来的应用程序中尝试这样做，看看是否能够解决问题。
 
-目前来看，这段代码的运行方式与普通的顺序代码并无不同。实际上，我们只是在模拟正常的调用栈。接下来，让我们通过一个简单的示例来了解如何在等待期间通过模拟休眠操作来执行其他代码。
-
-### 2.2 通过 sleep 引入长时间运行的协程
-
-我们可以使用 asyncio.sleep 让协程“休眠”指定的秒数。这样就能让我们的协程暂停相应的时间，从而模拟出调用数据库或 Web API 等耗时较长的操作时的情况。让我们来看一个简单的例子，如下面的代码所示：该代码会休眠 1 秒钟，然后打印出“Hello World!”消息。
-
-#### Listing2.5 使用 sleep 函数的首个应用程序
+#### Listing 3.5 首次尝试实现非阻塞服务器
 
 ```python
-import asyncio
+import socket
 
-async def hello_world_message() -> str:
-    await asyncio.sleep(1)
-    return 'Hello World'
+server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
 
-async def main() -> None:
-    message = hello_world_message()
-    print(message)
+server_address = ('127.0.0.1', 8080)
+server_socket.bind(server_address)
+server_socket.listen()
+server_socket.setblocking(False)
 
-asyncio.run(main())
+connections = []
+
+try:
+    while True:
+        connection, client_address = server_socket.accept()
+        connection.setblocking(False)
+        print(f'I got a connection from {client_address}!')
+        connections.append(connection)
+
+        for connection in connections:
+            buffer = b''
+
+            while buffer[-2:] != b'\r\n':
+                data = connection.recv(2)
+                if not data:
+                    break
+                else:
+                    print(f'I got data: {data}!')
+                    buffer = buffer + data
+
+            print(f"All the data is: {buffer}")
+            connection.send(buffer)
+finally:
+    server_socket.close()
 ```
 
-当我们运行这个应用程序时，程序会等待 1 秒钟后再输出“Hello World!”这条消息。由于 hello_world_messages 是一个协程，并且我们使用 asyncio.sleep 让它暂停了 1 秒钟，因此在这段时间内，程序可以同时执行其他代码。
+我们无法轻易判断套接字当前是否有数据，因此一种解决办法是捕获异常、忽略它，然后持续循环等待数据的到来。通过这种方式，我们可以尽可能快地检查新的连接和数据。这应该能解决我们之前使用的阻塞式套接字回声服务器所遇到的问题。
 
-#### Listing2.6 可重用的延迟函数
+#### Listing 3.6 捕获并忽略阻塞式 I/O 错误
 
 ```python
-import asyncio
+import socket
 
-async def delay(delay_seconds: int) -> int:
-    print(f'sleeping for {delay_seconds} second(s)')
-    await asyncio.sleep(delay_seconds)
-    print(f'finished sleeping for {delay_seconds} second(s)')
-    return delay_seconds
+server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+server_address = ('127.0.0.1', 8080)
+server_socket.bind(server_address)
+server_socket.listen()
+server_socket.setblocking(False)
+
+connections = []
+
+try:
+    while True:
+        try:
+            connection, client_address = server_socket.accept()
+            connection.setblocking(False)
+            print(f'I got a connection from {client_address}!')
+            connections.append(connection)
+        except BlockingIOError:
+            pass
+    
+        for connection in connections:
+            try:    
+                buffer = b''
+
+                while buffer[-2:] != b'\r\n':
+                    data = connection.recv(2)
+                    if not data:
+                        break
+                    else:
+                        print(f'I got data: {data}!')
+                        buffer = buffer + data
+
+                print(f"All the data is: {buffer}")
+                connection.send(buffer)
+            except BlockingIOError:
+                pass   
+finally:
+    server_socket.close()
 ```
 
-该函数接受一个以秒为单位的整数参数，表示函数需要休眠的时间长度。当休眠结束后，函数会将该整数值返回给调用者。同时，函数还会输出休眠的开始和结束时间，这有助于我们了解在协程暂停期间是否有其他代码在并发执行。
+在无限循环的每次迭代中，我们调用 accept 或 recv 函数时，要么立即抛出被忽略的异常，要么有可处理的数据可供处理。循环的每次迭代都进行得非常迅速，我们无需等待他人发送数据才能执行下一条代码。这样一来，既解决了阻塞式服务器的问题，又能让多个客户端同时连接并发送数据。
+
+这种方法确实有效，但也有代价。首先是代码质量方面的问题：每当可能还没有数据时就去捕获异常，会导致代码变得冗长且容易出错。其次是资源消耗问题：如果在笔记本电脑上运行该程序，几秒钟后就会发现风扇转速加快。。这是因为程序中不断循环并快速捕获异常，从而产生了高 CPU 负荷的工作负载。
